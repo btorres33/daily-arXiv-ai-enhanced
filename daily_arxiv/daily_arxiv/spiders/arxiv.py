@@ -20,13 +20,13 @@ class ArxivSpider(scrapy.Spider):
     def parse(self, response):
         # 提取每篇论文的信息
         anchors = []
-        for li in response.css("div[id=dlpage] ul li"):
-            href = li.css("a::attr(href)").get()
-            if href and "item" in href:
-                anchors.append(int(href.split("item")[-1]))
+        for anchor in response.css("dl#articles dt a[name^='item']::attr(name)"):
+            if anchor:
+                item_num = int(anchor.get().split("item")[-1])
+                anchors.append(item_num)
 
         # 遍历每篇论文的详细信息
-        for paper in response.css("dl dt"):
+        for paper in response.css("dl#articles dt"):
             paper_anchor = paper.css("a[name^='item']::attr(name)").get()
             if not paper_anchor:
                 continue
