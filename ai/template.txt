@@ -1,4 +1,13 @@
-Please analyze the following abstract of papers. 
+Please analyze the following abstract of papers in detail. Provide comprehensive and thorough analysis.
 
 Content:
 {content}
+
+Please provide a detailed summary including:
+1. A thorough TL;DR that captures the key contributions and findings
+2. A comprehensive motivation section explaining the research problem and its significance
+3. A detailed methodology section describing the approach, techniques, and experimental setup
+4. A thorough results section presenting key findings, metrics, and performance comparisons
+5. A comprehensive conclusion highlighting the impact, limitations, and future work
+
+Each section should be detailed and informative, providing sufficient depth and context for readers to understand the paper's contributions.
