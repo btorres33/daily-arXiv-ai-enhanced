@@ -1,6 +1,8 @@
 import os
 import json
 import sys
+import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 from queue import Queue
@@ -31,7 +33,51 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, required=True, help="jsonline data file")
     parser.add_argument("--max_workers", type=int, default=1, help="Maximum number of parallel workers")
+    parser.add_argument("--rpm_limit", type=int, default=15, help="Rate limit: requests per minute")
     return parser.parse_args()
+
+class RateLimiter:
+    """
+    简单的速率限制器，确保每分钟不超过指定数量的请求
+    Simple rate limiter to ensure no more than specified number of requests per minute
+    """
+
+    def __init__(self, max_requests_per_minute: int = 15):
+        self.max_requests = max_requests_per_minute
+        self.requests = deque()
+        self.lock = Lock()
+
+    def wait_if_needed(self):
+        """
+        检查是否需要等待以遵守速率限制
+        Check if need to wait to comply with rate limit
+        """
+        with self.lock:
+            now = time.time()
+
+            # 移除60秒前的请求记录
+            # Remove request records older than 60 seconds
+            while self.requests and now - self.requests[0] >= 60:
+                self.requests.popleft()
+
+            # 如果已达到限制，等待
+            # If limit reached, wait
+            if len(self.requests) >= self.max_requests:
+                # 计算需要等待的时间，直到最早的请求超过60秒
+                # Calculate how long to wait until the earliest request is over 60 seconds
+                wait_time = 60 - (now - self.requests[0])
+                if wait_time > 0:
+                    print(f"⏱️  速率限制: 达到 {self.max_requests} RPM, 等待 {wait_time:.2f} 秒... / Rate limit: {self.max_requests} RPM reached, waiting {wait_time:.2f}s...", file=sys.stderr)
+                    time.sleep(wait_time)
+                    # 重新检查并清理过期的请求记录
+                    # Re-check and clean up expired request records
+                    now = time.time()
+                    while self.requests and now - self.requests[0] >= 60:
+                        self.requests.popleft()
+
+            # 记录本次请求时间
+            # Record this request time
+            self.requests.append(now)
 
 def process_single_item(chain, item: Dict, language: str) -> Dict:
     def is_sensitive(content: str) -> bool:
@@ -112,27 +158,29 @@ def process_single_item(chain, item: Dict, language: str) -> Dict:
             return None
     return item
 
-def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int) -> List[Dict]:
+def process_all_items(data: List[Dict], model_name: str, language: str, max_workers: int, rate_limiter: RateLimiter) -> List[Dict]:
     """并行处理所有数据项"""
     llm = ChatOpenAI(model=model_name).with_structured_output(Structure, method="function_calling")
     print('Connect to:', model_name, file=sys.stderr)
-    
+    print(f'Rate limit: {rate_limiter.max_requests} requests per minute', file=sys.stderr)
+    print(f'Max workers: {max_workers}', file=sys.stderr)
+
     prompt_template = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system),
         HumanMessagePromptTemplate.from_template(template=template)
     ])
 
     chain = prompt_template | llm
-    
+
     # 使用线程池并行处理
     processed_data = [None] * len(data)  # 预分配结果列表
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # 提交所有任务
         future_to_idx = {
-            executor.submit(process_single_item, chain, item, language): idx
+            executor.submit(process_single_item_with_rate_limit, chain, item, language, rate_limiter): idx
             for idx, item in enumerate(data)
         }
-        
+
         # 使用tqdm显示进度
         for future in tqdm(
             as_completed(future_to_idx),
@@ -154,13 +202,29 @@ def process_all_items(data: List[Dict], model_name: str, language: str, max_work
                     "result": "Processing failed",
                     "conclusion": "Processing failed"
                 }
-    
+
     return processed_data
+
+def process_single_item_with_rate_limit(chain, item: Dict, language: str, rate_limiter: RateLimiter) -> Dict:
+    """
+    带速率限制的单个数据项处理函数
+    Single item processing function with rate limiting
+    """
+    # 在调用AI API之前检查速率限制
+    # Check rate limit before calling AI API
+    rate_limiter.wait_if_needed()
+
+    # 然后调用原有的处理函数
+    # Then call the original processing function
+    return process_single_item(chain, item, language)
 
 def main():
     args = parse_args()
     model_name = os.environ.get("MODEL_NAME", 'deepseek-chat')
     language = os.environ.get("LANGUAGE", 'Chinese')
+
+    # 创建速率限制器
+    rate_limiter = RateLimiter(max_requests_per_minute=args.rpm_limit)
 
     # 检查并删除目标文件
     target_file = args.data.replace('.jsonl', f'_AI_enhanced_{language}.jsonl')
@@ -184,20 +248,25 @@ def main():
 
     data = unique_data
     print('Open:', args.data, file=sys.stderr)
-    
+    print(f'Total unique papers to process: {len(data)}', file=sys.stderr)
+
     # 并行处理所有数据
     processed_data = process_all_items(
         data,
         model_name,
         language,
-        args.max_workers
+        args.max_workers,
+        rate_limiter
     )
-    
+
     # 保存结果
     with open(target_file, "w") as f:
         for item in processed_data:
             if item is not None:
                 f.write(json.dumps(item) + "\n")
+
+    print(f'\n✅ 处理完成! / Processing completed!', file=sys.stderr)
+    print(f'📊 处理了 {len([x for x in processed_data if x is not None])} 篇论文 / Processed {len([x for x in processed_data if x is not None])} papers', file=sys.stderr)
 
 if __name__ == "__main__":
     main()

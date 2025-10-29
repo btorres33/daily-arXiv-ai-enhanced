@@ -104,8 +104,10 @@ cd ..
 if [ "$PARTIAL_MODE" = "false" ]; then
     echo "步骤3：AI增强处理... / Step 3: AI enhancement processing..."
     cd ai
-    python enhance.py --data ../data/${today}.jsonl
-    
+    # 设置RPM限制为15次/分钟以遵守API限制
+    # Set RPM limit to 15 requests per minute to comply with API limits
+    python enhance.py --data ../data/${today}.jsonl --rpm_limit 15
+
     if [ $? -ne 0 ]; then
         echo "❌ AI处理失败 / AI processing failed"
         exit 1

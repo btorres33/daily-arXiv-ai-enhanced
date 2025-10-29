@@ -102,15 +102,17 @@ jobs:
         source .venv/bin/activate
         today=${{ steps.crawl_step.outputs.crawl_date }}
         echo "开始AI增强处理... / Starting AI enhancement processing..."
-        
+
         cd ai
         export OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
         export OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
         export LANGUAGE="${{ vars.LANGUAGE }}"
         export MODEL_NAME="${{ vars.MODEL_NAME }}"
-        
-        python enhance.py --data ../data/${today}.jsonl
-        
+
+        # 设置RPM限制为15次/分钟以遵守API限制
+        # Set RPM limit to 15 requests per minute to comply with API limits
+        python enhance.py --data ../data/${today}.jsonl --rpm_limit 15
+
         # 检查AI处理是否成功 / Check if AI processing was successful
         if [ $? -ne 0 ]; then
             echo "AI处理失败 / AI processing failed"
